@@ -227,51 +227,50 @@ with tab2:
         }
         
         # uACR 计算策略
-# ================= 重新设计的 uACR 深度计算与核验模块 =================
-        calc_success = False
-        u_alb = raw_data.get("u_albumin_raw", {})
-        u_cre = raw_data.get("u_creatinine_raw", {})
+calc_success = False
+        
+        # 【核心修复】增加 or {}，防止 AI 返回 null 导致程序崩溃
+        u_alb = raw_data.get("u_albumin_raw") or {}
+        u_cre = raw_data.get("u_creatinine_raw") or {}
         
         # 1. 优先逻辑：利用原始白蛋白 + 原始肌酐进行精准重算
-        if u_alb.get("value") and u_cre.get("value"):
+        # 只有当两个字典都不为空，且都有 "value" 时才计算
+        if isinstance(u_alb, dict) and isinstance(u_cre, dict) and u_alb.get("value") and u_cre.get("value"):
             try:
                 alb_val = float(u_alb["value"])
                 cre_val = float(u_cre["value"])
                 # 预处理单位字符串：去除空格、转小写、处理特殊字符
                 cre_unit = str(u_cre.get("unit", "")).lower().replace(" ", "")
                 
-                # 【关键修复】识别 umol/L 并强制转换为 mmol/L
-                # 覆盖多种写法：umol/L, μmol/L, uM/L, μM/L
+                # 识别 umol/L 并强制转换为 mmol/L
                 if any(x in cre_unit for x in ["umol", "μmol", "um/l", "μm/l"]):
                     cre_val = cre_val / 1000.0
                 
                 # 计算比值 (mg/mmol)
-                ratio_mg_mmol = alb_val / cre_val
-                
-                # 转换为标准单位 mg/g (依据: 1 mg/mmol ≈ 8.84 mg/g)
-                # 确保极高蛋白尿 (A3期) 能够被正确识别
-                temp_patient["uacr"] = round(ratio_mg_mmol * 8.84, 2)
-                calc_success = True
-                
-                st.success(f"✅ 原始值重算成功：uACR 为 **{temp_patient['uacr']} mg/g**")
-                
-                # 根据 KDIGO 指南自动判定分期风险 
-                if temp_patient["uacr"] > 300:
-                    st.error("🚨 警告：该患者处于 A3 期 (重度增加)，属于极高危状态！")
-                elif temp_patient["uacr"] >= 30:
-                    st.warning("⚠️ 提示：该患者处于 A2 期 (中度增加)。")
+                if cre_val > 0: # 防止除以0
+                    ratio_mg_mmol = alb_val / cre_val
+                    # 转换为标准单位 mg/g
+                    temp_patient["uacr"] = round(ratio_mg_mmol * 8.84, 2)
+                    calc_success = True
                     
+                    st.success(f"✅ 原始值重算成功：uACR 为 **{temp_patient['uacr']} mg/g**")
+                    
+                    if temp_patient["uacr"] > 300:
+                        st.error("🚨 警告：该患者处于 A3 期 (重度增加)，属于极高危状态！")
+                    elif temp_patient["uacr"] >= 30:
+                        st.warning("⚠️ 提示：该患者处于 A2 期 (中度增加)。")
             except Exception as e:
-                st.error(f"⚠️ 原始数值换算逻辑出错: {e}")
+                # 计算出错也不要崩，直接pass
+                print(f"uACR calc error: {e}")
+                pass
 
-        # 2. 备选逻辑：如果无法重算，则使用 AI 直接提取的 uACR 值并标准化
+        # 2. 备选逻辑：如果无法重算，则使用 AI 直接提取的 uACR 值
         if not calc_success:
-            u_raw = raw_data.get("uacr_raw", {})
-            if u_raw.get("value"):
+            u_raw = raw_data.get("uacr_raw") or {} # 同样加保险
+            if isinstance(u_raw, dict) and u_raw.get("value"):
                 std_val = standardize_uacr(u_raw["value"], u_raw.get("unit"))
                 if std_val:
                     temp_patient["uacr"] = std_val
-                    # 判断是否进行了单位转换
                     if abs(std_val - float(u_raw["value"])) > 0.1:
                         st.warning(f"🔄 采用提取值并完成换算：{u_raw['value']} {u_raw.get('unit')} → {std_val} mg/g")
                     else:
@@ -507,4 +506,5 @@ if current_patient:
 
             except Exception as e:
                 st.error(f"决策引擎异常: {e}")
+
                 if 'res' in locals(): st.text_area("原始响应内容", res.text)
