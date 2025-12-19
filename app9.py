@@ -227,7 +227,7 @@ with tab2:
         }
         
         # uACR 计算策略
-calc_success = False
+        calc_success = False
         
         # 【核心修复】增加 or {}，防止 AI 返回 null 导致程序崩溃
         u_alb = raw_data.get("u_albumin_raw") or {}
@@ -508,3 +508,4 @@ if current_patient:
                 st.error(f"决策引擎异常: {e}")
 
                 if 'res' in locals(): st.text_area("原始响应内容", res.text)
+
